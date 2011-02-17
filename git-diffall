@@ -13,8 +13,8 @@ USAGE='[--cached] <commit>{0,2} -- <path>*
 SUBDIRECTORY_OK=1
 . "$(git --exec-path)/git-sh-setup"
 
-if [ -z $(git config --get diff.tool) ]; then
-    echo "Error: The 'diff.tool' configuration option must be set."
+if [ -z $(git config --get diffall.external) ]; then
+    echo "Error: The 'diffall.external' configuration option must be set."
     usage
 fi
 
@@ -187,7 +187,7 @@ while read name; do
 done < "$tmp"/filelist
 
 cd "$tmp"
-$(git config --get diff.tool) "$left_dir" "$right_dir"
+$(git config --get diffall.external) "$left_dir" "$right_dir"
 
 # On exit, remove the tmp directory
 cleanup () {
