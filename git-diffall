@@ -1,13 +1,29 @@
-#!/bin/sh -e
-# Copyright 2010, Tim Henigan <tim.henigan@gmail.com>
+#!/bin/bash -e
+# Copyright 2010 - 2012, Tim Henigan <tim.henigan@gmail.com>
 #
 # Perform a directory diff between commits in the repository using
 # the external diff tool specified in the 'diff.tool' configuration
 # option.
+#
+# NOTE: When making changes to this script, only use POSIX features.
+# The 'checkbashisms' script provides a good test.  This perl script
+# may be found at http://sourceforge.net/projects/checkbaskisms
 
-USAGE='[--cached] <commit>{0,2} -- <path>*
+USAGE='[--cached] [--copy-back] [-x|--extcmd=<command>] <commit>{0,2} -- <path>*
 
-    --cached  Compare to the index rather than the working tree
+    --cached     Compare to the index rather than the working tree.
+
+    --copy-back  Copy files back to the working tree when the diff
+                 tool exits (in case they were modified by the
+                 user).  This option is only valid if the diff
+                 compared with the working tree.
+
+    -x=<command>
+    --extcmd=<command>  Specify a custom command for viewing diffs.
+                 git-diffall ignores the configured defaults and
+                 runs $command $LOCAL $REMOTE when this option is
+                 specified. Additionally, $BASE is set in the
+                 environment.
 '
 
 SUBDIRECTORY_OK=1
@@ -29,7 +45,7 @@ cd "$cdup" || {
 
 # mktemp is not available on all platforms (missing from msysgit)
 # Use a hard-coded tmp dir if it is not available
-if [ -z $(which mktemp) ]; then
+if [ -z $(which mktemp 2>/dev/null) ]; then
     tmp=/tmp/git-diffall-tmp
 else
     tmp="$(mktemp -d -t tmp.XXXXXX)"
@@ -44,6 +60,8 @@ compare_staged=
 common_ancestor=
 left_dir=
 right_dir=
+diff_tool=
+copy_back=
 
 while test $# != 0; do
     case "$1" in
@@ -52,6 +70,14 @@ while test $# != 0; do
         ;;
     --cached)
         compare_staged=1
+        ;;
+    --copy-back)
+        copy_back=1
+        ;;
+    -x|--e|--ex|--ext|--extc|--extcm|--extcmd)
+        diff_tool=$2
+        shift
+        echo "$diff_tool"
         ;;
     --)
         path_sep=1
@@ -105,35 +131,40 @@ if [ -n "$left" ] && [ -n "$right" ]; then
     if [ -n "$compare_staged" ]; then
         usage
     elif [ -n "$common_ancestor" ]; then
-        git diff --name-only "$left"..."$right" -- "$paths" > "$tmp"/filelist
+        git diff --name-only "$left"..."$right" -- $paths > "$tmp"/filelist
     else
-        git diff --name-only "$left" "$right" -- "$paths" > "$tmp"/filelist
+        git diff --name-only "$left" "$right" -- $paths > "$tmp"/filelist
     fi
 elif [ -n "$left" ]; then
     left_dir="cmt-`git rev-parse --short $left`"
 
     if [ -n "$compare_staged" ]; then
         right_dir="staged"
-        git diff --name-only --cached "$left" -- "$paths" > "$tmp"/filelist
+        git diff --name-only --cached "$left" -- $paths > "$tmp"/filelist
     else
         right_dir="working_tree"
-        git diff --name-only "$left" -- "$paths" > "$tmp"/filelist
+        git diff --name-only "$left" -- $paths > "$tmp"/filelist
     fi
 else
     left_dir="HEAD"
 
     if [ -n "$compare_staged" ]; then
         right_dir="staged"
-        git diff --name-only --cached -- "$paths" > "$tmp"/filelist
+        git diff --name-only --cached -- $paths > "$tmp"/filelist
     else
         right_dir="working_tree"
-        git diff --name-only -- "$paths" > "$tmp"/filelist
+        git diff --name-only -- $paths > "$tmp"/filelist
     fi
 fi
 
 # Exit immediately if there are no diffs
 if [ ! -s "$tmp"/filelist ]; then
     exit 0
+fi
+
+if [ -n "$copy_back" ] && [ "$right_dir" != "working_tree" ]; then
+    echo "--copy-back is only valid when diff includes the working tree."
+    exit 1
 fi
 
 # Create the named tmp directories that will hold the files to be compared
@@ -157,7 +188,7 @@ elif [ -n "$compare_staged" ]; then
         fi
     done < "$tmp"/filelist
 else
-    if [ -n "$(which gnutar)" ]; then
+    if [ -n "$(which gnutar 2>/dev/null)" ]; then
         gnutar --ignore-failed-read -c -T "$tmp"/filelist | (cd "$tmp"/"$right_dir" && gnutar -x)
     else
         tar --ignore-failed-read -c -T "$tmp"/filelist | (cd "$tmp"/"$right_dir" && tar -x)
@@ -187,11 +218,33 @@ while read name; do
 done < "$tmp"/filelist
 
 cd "$tmp"
+<<<<<<< HEAD
 $(git config --get diffall.external) "$left_dir" "$right_dir"
+=======
+LOCAL="$left_dir"
+REMOTE="$right_dir"
 
-# On exit, remove the tmp directory
+if [ -n "$diff_tool" ]; then
+    export BASE
+    eval $diff_tool '"$LOCAL"' '"$REMOTE"'
+else
+    run_merge_tool "$merge_tool" false
+fi
+>>>>>>> 0b6e4d9a6d9dff1506e3d1f6f3bbcbc4e40b65d2
+
+# This function is called on exit
 cleanup () {
     cd "$start_dir"
+
+    # Copy files back to the working dir, if requested
+    if [ -n "$copy_back" ] && [ "$right_dir" = "working_tree" ]; then
+        git_top_dir=$(git rev-parse --show-toplevel)
+        find "$tmp/$right_dir" -type f|while read file; do
+            cp "$file" "$git_top_dir/${file#$tmp/$right_dir/}"
+        done
+    fi
+
+    # Remove the tmp directory
     rm -rf "$tmp"
 }
 
