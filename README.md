@@ -21,3 +21,4 @@ Forked to add in an araxisgitdiffall AppleScript and modified git-diffall to use
 
 	[diffall]
 		external = /path/to/your/bin/araxisgitdiffall
+		
